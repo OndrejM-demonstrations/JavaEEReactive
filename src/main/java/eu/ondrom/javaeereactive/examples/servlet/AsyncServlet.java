@@ -53,7 +53,6 @@ public class AsyncServlet extends HttpServlet {
                     Logger.getLogger(AsyncServlet.class.getName()).log(Level.SEVERE, null, ex);
                 }
             });
-        
     }
 
     private Path getHtmlFilePath(HttpServletRequest req) {
@@ -79,7 +78,12 @@ public class AsyncServlet extends HttpServlet {
         @Override
         public void completed(Integer result, Object attachment) {
             if (result == -1) {
-                fileReadfuture.complete(fileContents.toString());
+                try {
+                    fileChannel.close();
+                    fileReadfuture.complete(fileContents.toString());
+                } catch (IOException ex) {
+                    fileReadfuture.completeExceptionally(ex);
+                }
             } else {
                 lastPosition += result;
                 buffer.flip();
@@ -92,6 +96,10 @@ public class AsyncServlet extends HttpServlet {
 
         @Override
         public void failed(Throwable exc, Object attachment) {
+            try {
+                fileChannel.close();
+            } catch (IOException ex) {
+            }
             fileReadfuture.completeExceptionally(exc);
         }
 
