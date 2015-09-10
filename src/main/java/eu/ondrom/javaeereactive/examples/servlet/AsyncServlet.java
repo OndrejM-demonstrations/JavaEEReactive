@@ -1,8 +1,6 @@
 package eu.ondrom.javaeereactive.examples.servlet;
 
 import java.io.IOException;
-import java.net.MalformedURLException;
-import java.net.URISyntaxException;
 import java.nio.ByteBuffer;
 import java.nio.CharBuffer;
 import java.nio.channels.AsynchronousFileChannel;
@@ -15,10 +13,10 @@ import java.util.Collections;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
+import java.util.concurrent.ExecutorService;
 import java.util.logging.Level;
 import java.util.logging.Logger;
-import javax.annotation.Resource;
-import javax.enterprise.concurrent.ManagedExecutorService;
+import javax.inject.Inject;
 import javax.servlet.AsyncContext;
 import javax.servlet.ServletException;
 import javax.servlet.annotation.WebServlet;
@@ -29,33 +27,36 @@ import javax.servlet.http.HttpServletResponse;
 @WebServlet(urlPatterns = "/asyncServlet", asyncSupported = true)
 public class AsyncServlet extends HttpServlet {
 
-    @Resource
-    private ManagedExecutorService executorService;
+    @Inject
+    private ExecutorService executorService;
     
     @Override
     protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws ServletException, IOException {
         
         AsyncContext asyncContext = req.startAsync();
         
-        Path pathToHtmlFile = getHtmlFilePath(req);
-        Set<StandardOpenOption> readOption = Collections.singleton(StandardOpenOption.READ);
-        AsynchronousFileChannel fileChannel = AsynchronousFileChannel.open(pathToHtmlFile, readOption, executorService);
-        ByteBuffer buffer = ByteBuffer.allocate(1024);
-        long position = 0;
-        new AsyncFileReader(fileChannel, buffer, position)
+        AsynchronousFileChannel fileChannel = AsynchronousFileChannel.open(htmlFilePathFrom(req), readOption(), executorService);
+        new AsyncFileReader(fileChannel)
             .read()
-            .thenAccept(contents -> {
+            .thenComposeAsync(contents -> {
                 try {
                     // TODO write asynchronusly using resp.getOutputStream().setWriteListener
                     asyncContext.getResponse().getOutputStream().print(contents);
-                    asyncContext.complete();
+                    return CompletableFuture.completedFuture("OK");
                 } catch (IOException ex) {
                     Logger.getLogger(AsyncServlet.class.getName()).log(Level.SEVERE, null, ex);
+                    throw new RuntimeException(ex);
                 }
-            });
+            }, executorService).thenRunAsync(() -> {
+                asyncContext.complete();
+            }, executorService);
     }
 
-    private Path getHtmlFilePath(HttpServletRequest req) {
+    private static Set<StandardOpenOption> readOption() {
+        return Collections.singleton(StandardOpenOption.READ);
+    }
+
+    private Path htmlFilePathFrom(HttpServletRequest req) {
         return Paths.get(req.getServletContext().getRealPath("/asyncServletResponse.html"));
     }
 
@@ -63,14 +64,13 @@ public class AsyncServlet extends HttpServlet {
 
         private CompletableFuture<String> fileReadfuture;
         private AsynchronousFileChannel fileChannel;
-        private ByteBuffer buffer;
+        private ByteBuffer buffer = ByteBuffer.allocate(1024);
         private long lastPosition;
         private StringBuilder fileContents;
 
-        public AsyncFileReader(AsynchronousFileChannel fileChannel, ByteBuffer buffer, long position) {
+        public AsyncFileReader(AsynchronousFileChannel fileChannel) {
             this.fileChannel = fileChannel;
-            this.buffer = buffer;
-            this.lastPosition = position;
+            this.lastPosition = 0;
             this.fileReadfuture = new CompletableFuture<>();
             this.fileContents = new StringBuilder();
         }
