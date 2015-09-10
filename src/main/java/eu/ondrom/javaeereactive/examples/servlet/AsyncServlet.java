@@ -5,6 +5,7 @@ import java.nio.ByteBuffer;
 import java.nio.CharBuffer;
 import java.nio.channels.AsynchronousFileChannel;
 import java.nio.channels.CompletionHandler;
+import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -19,6 +20,8 @@ import java.util.logging.Logger;
 import javax.inject.Inject;
 import javax.servlet.AsyncContext;
 import javax.servlet.ServletException;
+import javax.servlet.ServletOutputStream;
+import javax.servlet.WriteListener;
 import javax.servlet.annotation.WebServlet;
 import javax.servlet.http.HttpServlet;
 import javax.servlet.http.HttpServletRequest;
@@ -29,27 +32,20 @@ public class AsyncServlet extends HttpServlet {
 
     @Inject
     private ExecutorService executorService;
-    
+
     @Override
     protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws ServletException, IOException {
-        
+
         AsyncContext asyncContext = req.startAsync();
-        
+
         AsynchronousFileChannel fileChannel = AsynchronousFileChannel.open(htmlFilePathFrom(req), readOption(), executorService);
-        new AsyncFileReader(fileChannel)
-            .read()
-            .thenComposeAsync(contents -> {
-                try {
-                    // TODO write asynchronusly using resp.getOutputStream().setWriteListener
-                    asyncContext.getResponse().getOutputStream().print(contents);
-                    return CompletableFuture.completedFuture("OK");
-                } catch (IOException ex) {
-                    Logger.getLogger(AsyncServlet.class.getName()).log(Level.SEVERE, null, ex);
-                    throw new RuntimeException(ex);
-                }
-            }, executorService).thenRunAsync(() -> {
-                asyncContext.complete();
-            }, executorService);
+        new AsyncFileReader(fileChannel, StandardCharsets.UTF_8)
+                .read()
+                .thenComposeAsync(contents -> {
+                    return new AsyncServletWriter(asyncContext).write(contents, StandardCharsets.UTF_8);
+                }, executorService).thenRunAsync(() -> {
+                    asyncContext.complete();
+                }, executorService);
     }
 
     private static Set<StandardOpenOption> readOption() {
@@ -67,12 +63,14 @@ public class AsyncServlet extends HttpServlet {
         private ByteBuffer buffer = ByteBuffer.allocate(1024);
         private long lastPosition;
         private StringBuilder fileContents;
+        private Charset charset;
 
-        public AsyncFileReader(AsynchronousFileChannel fileChannel) {
+        public AsyncFileReader(AsynchronousFileChannel fileChannel, Charset charset) {
             this.fileChannel = fileChannel;
             this.lastPosition = 0;
             this.fileReadfuture = new CompletableFuture<>();
             this.fileContents = new StringBuilder();
+            this.charset = charset;
         }
 
         @Override
@@ -87,7 +85,7 @@ public class AsyncServlet extends HttpServlet {
             } else {
                 lastPosition += result;
                 buffer.flip();
-                CharBuffer charBuffer = StandardCharsets.UTF_8.decode(buffer);
+                CharBuffer charBuffer = charset.decode(buffer);
                 buffer.clear();
                 fileContents.append(charBuffer);
                 fileChannel.read(buffer, lastPosition, attachment, this);
@@ -108,4 +106,52 @@ public class AsyncServlet extends HttpServlet {
             return fileReadfuture;
         }
     }
-}    
+
+    private static class AsyncServletWriter implements WriteListener {
+
+        private final AsyncContext asyncContext;
+        private ServletOutputStream outputStream;
+        private byte[] data;
+        private int bytesWritten;
+        private boolean allWritten = false;
+        private CompletableFuture<Void> fileWriteFuture;
+
+        public AsyncServletWriter(AsyncContext asyncContext) {
+            this.asyncContext = asyncContext;
+        }
+
+        @Override
+        public void onWritePossible() throws IOException {
+            while (!allWritten && outputStream.isReady()) {
+                int bytesToWrite = Math.min(1024, data.length - bytesWritten);
+                if (bytesToWrite > 0) {
+                    outputStream.write(data, bytesWritten, bytesToWrite);
+                    bytesWritten += 1024;
+                } else {
+                    allWritten = true;
+                    fileWriteFuture.complete(null);
+                }
+            }
+        }
+
+        @Override
+        public void onError(Throwable t) {
+            fileWriteFuture.completeExceptionally(t);
+        }
+
+        public CompletableFuture<Void> write(String contents, Charset charset) {
+            fileWriteFuture = new CompletableFuture();
+            try {
+                outputStream = asyncContext.getResponse().getOutputStream();
+                data = contents.getBytes(charset);
+                bytesWritten = 0;
+                allWritten = false;
+                outputStream.setWriteListener(this);
+            } catch (IOException ex) {
+
+                fileWriteFuture.completeExceptionally(ex);
+            }
+            return fileWriteFuture;
+        }
+    }
+}
