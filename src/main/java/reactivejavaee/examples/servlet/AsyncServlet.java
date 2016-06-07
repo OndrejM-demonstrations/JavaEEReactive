@@ -1,4 +1,4 @@
-package eu.ondrom.javaeereactive.examples.servlet;
+package reactivejavaee.examples.servlet;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -26,11 +26,13 @@ import javax.servlet.annotation.WebServlet;
 import javax.servlet.http.HttpServlet;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
+import reactivejavaee.cdi.boundary.Managed;
 
 @WebServlet(urlPatterns = "/asyncServlet", asyncSupported = true)
 public class AsyncServlet extends HttpServlet {
 
     @Inject
+    @Managed
     private ExecutorService executorService;
 
     @Override
@@ -38,11 +40,18 @@ public class AsyncServlet extends HttpServlet {
 
         AsyncContext asyncContext = req.startAsync();
 
-        AsynchronousFileChannel fileChannel = AsynchronousFileChannel.open(htmlFilePathFrom(req), readOption(), executorService);
+        // get the NIO channel (something like a file descriptor)
+        AsynchronousFileChannel fileChannel = 
+                AsynchronousFileChannel
+                        .open(htmlFilePathFrom(req), readOption(),
+                                executorService);
+        // read file, write to async servlet output, 
+        // then finish the response
         new AsyncFileReader(fileChannel, StandardCharsets.UTF_8)
                 .read()
                 .thenComposeAsync(contents -> {
-                    return new AsyncServletWriter(asyncContext).write(contents, StandardCharsets.UTF_8);
+                    return new AsyncServletWriter(asyncContext)
+                            .write(contents, StandardCharsets.UTF_8);
                 }, executorService).thenRunAsync(() -> {
                     asyncContext.complete();
                 }, executorService);
@@ -56,7 +65,7 @@ public class AsyncServlet extends HttpServlet {
         return Paths.get(req.getServletContext().getRealPath("/asyncServletResponse.html"));
     }
 
-    private static class AsyncFileReader implements CompletionHandler<Integer, Object> {
+    public static class AsyncFileReader implements CompletionHandler<Integer, Object> {
 
         private CompletableFuture<String> fileReadfuture;
         private AsynchronousFileChannel fileChannel;
@@ -107,7 +116,7 @@ public class AsyncServlet extends HttpServlet {
         }
     }
 
-    private static class AsyncServletWriter implements WriteListener {
+    public static class AsyncServletWriter implements WriteListener {
 
         private final AsyncContext asyncContext;
         private ServletOutputStream outputStream;
