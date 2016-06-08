@@ -4,14 +4,32 @@
         <title>Start demo</title>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <style type="text/css">
+            body {
+                font-size: 500%;
+                margin-left: 1em;
+            }
+            li {
+                margin-bottom: 0.5em;
+            }
+        </style>
     </head>
     <body>
         <div>
-            <ul>
+            <ol>
                 <li>
                     <a href="asyncServlet">Async Servlet Response Demo</a>
                 </li>
-            </ul>
+                <li>
+                    <a href="asyncEJB?msg=Superman is the greatest!">Async EJB Demo</a>
+                </li>
+                <li>
+                    <a href="fullyAsyncEJB?msg=Superman is the greatest!">Fully Async EJB Demo</a>
+                </li>
+                <li>
+                    <a href="rest/async">Async REST Resource Demo</a>
+                </li>
+            </ol>
         </div>
     </body>
 </html>
