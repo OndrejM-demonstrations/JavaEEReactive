@@ -57,14 +57,7 @@ public class CompletionStageRxJavaTest {
 
     @Test
     public void combine_CF_with_RxJava2_blocking() throws InterruptedException {
-        CompletionStage<String> stage = CompletableFuture.supplyAsync(() -> {
-            try {
-                Thread.sleep(1000); //  imitate expensive computation
-            } catch (InterruptedException ex) {
-                throw new RuntimeException(ex);
-            }
-            return "Done";
-        });
+        CompletionStage<String> stage = expensiveComputation();
 
         testResult = Flowable.fromPublisher((Subscriber<? super String> subscriber) -> {
             stage.whenComplete((result, error) -> {
@@ -83,14 +76,7 @@ public class CompletionStageRxJavaTest {
 
     @Test
     public void combine_CF_with_RxJava2_chaining() throws InterruptedException {
-        CompletionStage<String> stage = CompletableFuture.supplyAsync(() -> {
-            try {
-                Thread.sleep(1000); //  imitate expensive computation
-            } catch (InterruptedException ex) {
-                throw new RuntimeException(ex);
-            }
-            return "Done";
-        });
+        CompletionStage<String> stage = expensiveComputation();
 
         Flowable.fromPublisher((Subscriber<? super String> subscriber) -> {
             stage.whenComplete((result, error) -> {
@@ -107,4 +93,48 @@ public class CompletionStageRxJavaTest {
         Thread.sleep(2000); // <--- wait for the flow to finish}
         assertThat("Result", testResult, is(equalTo("Done")));
     }
+
+    @Test
+    public void combine_CF_with_RxJava2_almost_fluent() throws InterruptedException {
+        flowableFromStage(expensiveComputation())
+                .subscribe(s -> testResult = s, Throwable::printStackTrace);
+
+        Thread.sleep(2000); // <--- wait for the flow to finish}
+        assertThat("Result", testResult, is(equalTo("Done")));
+    }
+
+    private <T> Flowable<T> flowableFromStage(CompletionStage<T> stage) {
+        return Flowable.fromPublisher((subscriber) -> {
+            stage.whenComplete((result, error) -> {
+                if (error != null) {
+                    subscriber.onError(error);
+                } else {
+                    subscriber.onNext(result);
+                    subscriber.onComplete();
+                }
+            });
+        });
+    }
+
+    @Test
+    public void combine_CF_with_RxJava2_fluent() throws InterruptedException {
+        expensiveComputation()
+                .convert(this::flowableFromStage)
+                .subscribe(s -> testResult = s, Throwable::printStackTrace);
+
+        Thread.sleep(2000); // <--- wait for the flow to finish}
+        assertThat("Result", testResult, is(equalTo("Done")));
+    }
+
+    private static RxCompletionStage<String> expensiveComputation() {
+        return new RxCompletionStageWrapper(CompletableFuture.supplyAsync(() -> {
+            try {
+                Thread.sleep(1000); //  imitate expensive computation
+            } catch (InterruptedException ex) {
+                throw new RuntimeException(ex);
+            }
+            return "Done";
+        }));
+    }
+    
 }
